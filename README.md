@@ -149,6 +149,52 @@ go test ./... -v
 
 RSSI from the Mac WiFi chip provides presence/motion detection only. For pose estimation, spatial tracking, and accurate vital signs, ESP32 hardware with CSI is required. See the hardware table above.
 
+### Roadmap / TODO
+
+#### Platform Support
+
+| Platform | Status | Notes |
+|----------|--------|-------|
+| **macOS** | ✅ Supported | CoreWLAN (Swift) → real-time RSSI at 10 Hz |
+| **Linux** | 🔲 Planned | `iwconfig` / `iw dev` RSSI collection, Nexmon CSI on Raspberry Pi 4 |
+| **Windows** | 🔲 Planned | `netsh wlan` RSSI collection, WLAN API integration |
+
+#### Linux Support (`-source wifi` on Linux)
+
+- [ ] `iw dev <iface> link` を使った RSSI / Noise 収集 (iwconfig fallback)
+- [ ] Raspberry Pi 4 (BCM43455c0) + Nexmon CSI パッチによる CSI 取得
+- [ ] `nl80211` ベースの低レベル WiFi モニタリング
+- [ ] systemd サービスファイルの提供
+- [ ] ARM64 / ARMv7 クロスコンパイル対応
+
+#### Windows Support (`-source wifi` on Windows)
+
+- [ ] `netsh wlan show interfaces` による RSSI 取得
+- [ ] Native WiFi (WLAN) API による低レベルスキャン
+- [ ] Windows サービスとしてのバックグラウンド実行
+- [ ] MSI / WinGet インストーラー
+
+#### ESP32 CSI Integration (`-source esp32`)
+
+- [ ] ADR-018 バイナリプロトコル UDP パーサー (実装済み — 実機テスト待ち)
+- [ ] ESP32-S3 + IDF 5.x CSI コールバックによるサブキャリア振幅・位相データ受信
+- [ ] マルチノード TDM (時分割多重) メッシュ対応
+- [ ] CSI → DensePose ニューラル推論 (ONNX Runtime for Go)
+- [ ] ESP32 ファームウェア自動 OTA アップデート
+- [ ] マルチスタティック (複数送受信ペア) 配置のキャリブレーション
+
+#### Mesh Network Integration
+
+- [ ] Tailscale / Runetale VPN 経由のマルチノードセンシング統合
+- [ ] 分散ノード間のデータ集約 & フュージョン
+- [ ] Go ネイティブ WireGuard トンネル上の低レイテンシ CSI 転送
+
+#### ML / Inference
+
+- [ ] ONNX Runtime Go バインディングによるモデル推論
+- [ ] Python トレーニングパイプライン → ONNX エクスポート → Go 推論の一気通貫フロー
+- [ ] エッジデバイス向け量子化モデル (INT8 / FP16)
+
 ---
 
 ## 📖 Documentation
