@@ -14,6 +14,7 @@
 const _wsProto = (typeof window !== 'undefined' && window.location.protocol === 'https:') ? 'wss:' : 'ws:';
 const _wsHost  = (typeof window !== 'undefined' && window.location.host) ? window.location.host : 'localhost:3000';
 const SENSING_WS_URL = `${_wsProto}//${_wsHost}/ws/sensing`;
+const PYTHON_SENSING_WS_URL = 'ws://localhost:8765';
 const RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 16000];
 const MAX_RECONNECT_ATTEMPTS = 20;
 // Number of failed attempts that must occur before simulation starts.
@@ -30,6 +31,7 @@ class SensingService {
     this._reconnectAttempt = 0;
     this._reconnectTimer = null;
     this._simTimer = null;
+    this._activeUrl = null;
     // Connection state: disconnected | connecting | connected | reconnecting | simulated
     this._state = 'disconnected';
     // Data-source label exposed to the UI:
@@ -101,27 +103,35 @@ class SensingService {
 
   // ---- Connection --------------------------------------------------------
 
-  _connect() {
+  _connect(url) {
     if (this._ws && this._ws.readyState <= WebSocket.OPEN) return;
 
+    const wsUrl = url || SENSING_WS_URL;
     this._setState('connecting');
 
     try {
-      this._ws = new WebSocket(SENSING_WS_URL);
+      this._ws = new WebSocket(wsUrl);
     } catch (err) {
       console.warn('[Sensing] WebSocket constructor failed:', err.message);
+      if (wsUrl === SENSING_WS_URL) {
+        this._tryPythonServer();
+        return;
+      }
       this._fallbackToSimulation();
       return;
     }
 
     this._ws.onopen = () => {
-      console.info('[Sensing] Connected to', SENSING_WS_URL);
+      console.info('[Sensing] Connected to', wsUrl);
       this._reconnectAttempt = 0;
       this._stopSimulation();
       this._setState('connected');
-      // Don't assume "live" yet — wait for first frame's source field.
-      // Fetch server status to determine actual data source immediately.
-      this._detectServerSource();
+      this._activeUrl = wsUrl;
+      if (wsUrl === PYTHON_SENSING_WS_URL) {
+        this._setDataSource('live');
+      } else {
+        this._detectServerSource();
+      }
     };
 
     this._ws.onmessage = (evt) => {
@@ -149,6 +159,11 @@ class SensingService {
     };
   }
 
+  _tryPythonServer() {
+    console.info('[Sensing] Trying Python sensing server at', PYTHON_SENSING_WS_URL);
+    this._connect(PYTHON_SENSING_WS_URL);
+  }
+
   _scheduleReconnect() {
     if (this._reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) {
       console.warn('[Sensing] Max reconnect attempts (%d) reached, switching to simulation', MAX_RECONNECT_ATTEMPTS);
@@ -165,7 +180,7 @@ class SensingService {
 
     this._reconnectTimer = setTimeout(() => {
       this._reconnectTimer = null;
-      this._connect();
+      this._connect(this._activeUrl);
     }, delay);
 
     // Only start simulation after several failed attempts so a brief hiccup
@@ -276,8 +291,12 @@ class SensingService {
       if (resp.ok) {
         const json = await resp.json();
         this._applyServerSource(json.source);
+        if ((json.source === 'simulated' || json.source === 'simulate') && this._activeUrl !== PYTHON_SENSING_WS_URL) {
+          console.info('[Sensing] Rust server is simulated, trying Python sensing server for real WiFi data');
+          this._ws.close(1000, 'switching to python');
+          this._tryPythonServer();
+        }
       } else {
-        // Can't reach status endpoint — assume live until first frame tells us
         this._setDataSource('live');
       }
     } catch {
@@ -290,7 +309,7 @@ class SensingService {
    */
   _applyServerSource(rawSource) {
     this._serverSource = rawSource;
-    if (rawSource === 'esp32' || rawSource === 'wifi' || rawSource === 'live') {
+    if (rawSource === 'esp32' || rawSource === 'wifi' || rawSource === 'live' || rawSource === 'macos_wifi' || rawSource === 'linux_wifi' || rawSource === 'windows_wifi') {
       this._setDataSource('live');
     } else if (rawSource === 'simulated' || rawSource === 'simulate') {
       this._setDataSource('server-simulated');

@@ -69,6 +69,82 @@ docker run -p 3000:3000 ruvnet/wifi-densepose:latest
 >
 ---
 
+## Go Version (go-densepose)
+
+A lightweight Go re-implementation of RuView's core sensing server. Designed for integration with Go-based mesh networks (e.g. Tailscale/Runetale). Training remains in Python; Go handles real-time inference and signal processing.
+
+### Quick Start (macOS)
+
+```bash
+cd go-densepose
+
+# Build
+go build -o densepose-server ./cmd/densepose/
+
+# Build the Swift WiFi helper (first time only)
+swiftc -o ../v1/src/sensing/mac_wifi ../v1/src/sensing/mac_wifi.swift -framework CoreWLAN -framework Foundation
+
+# Run (real-time RSSI sensing from Mac WiFi)
+./densepose-server -source wifi -http-port 3000 -ui-path ./ui
+
+# Open the 3D UI
+open http://localhost:3000/ui/
+```
+
+### What It Does
+
+| Feature | Description |
+|---------|-------------|
+| **RSSI Collection** | CoreWLAN via Swift binary at 10 Hz |
+| **Feature Extraction** | FFT, Hann window, band powers, CUSUM — matches Python v1 |
+| **Classification** | 4-level: absent / present_still / present_moving / active |
+| **Vital Signs** | Breathing (0.1–0.5 Hz) and heart rate (0.67–2.0 Hz) via Goertzel |
+| **Signal Field** | 20×20 Gaussian splat grid — matches Python v1 |
+| **ESP32 CSI** | ADR-018 binary parser + UDP aggregator (ready for hardware) |
+| **3D UI** | Three.js observatory with real-time WebSocket updates |
+| **WebSocket API** | `ws://localhost:3000/ws/sensing` — same JSON format as Python v1 |
+| **REST API** | `/health`, `/api/v1/status`, `/api/v1/sensing/latest`, `/api/v1/vital-signs` |
+
+### Project Structure
+
+```
+go-densepose/
+├── cmd/densepose/main.go          # CLI entry point
+├── pkg/
+│   ├── csi/                       # Core types (CsiFrame, SignalFeatures, Classification)
+│   ├── wifi/                      # macOS/Linux WiFi scanner (CoreWLAN + simulated)
+│   ├── features/                  # Feature extraction (FFT, stats, CUSUM)
+│   ├── classify/                  # Presence/motion classifier with EMA + debounce
+│   ├── vitals/                    # Breathing/heart rate detection (Goertzel)
+│   ├── hardware/                  # ESP32 ADR-018 binary parser + UDP aggregator
+│   └── server/                    # HTTP/WebSocket server (gorilla/websocket)
+├── ui/index.html                  # 3D sensing UI (Three.js)
+└── tests/e2e/                     # Python E2E tests
+```
+
+### CLI Flags
+
+```
+-source      wifi|simulated|esp32   Data source (default: wifi)
+-http-port   int                    HTTP port (default: 3000)
+-ui-path     string                 Path to UI directory
+-sample-rate float                  WiFi sample rate in Hz (default: 10)
+-esp32-port  int                    ESP32 UDP port (default: 5000)
+```
+
+### Running Tests
+
+```bash
+cd go-densepose
+go test ./... -v
+```
+
+### Limitations on Mac
+
+RSSI from the Mac WiFi chip provides presence/motion detection only. For pose estimation, spatial tracking, and accurate vital signs, ESP32 hardware with CSI is required. See the hardware table above.
+
+---
+
 ## 📖 Documentation
 
 | Document | Description |

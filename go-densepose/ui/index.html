@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RuView Go — WiFi Sensing</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{width:100%;height:100%;overflow:hidden;background:#080c14;font-family:'SF Mono','Menlo',monospace;color:#c8d8e4}
+canvas#scene{position:fixed;top:0;left:0;width:100%;height:100%;z-index:0}
+
+/* HUD Overlay */
+#hud{position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:10}
+#hud *{pointer-events:auto}
+
+/* Brand */
+#brand{position:absolute;top:16px;left:20px}
+#brand h1{font-size:20px;font-weight:700;letter-spacing:-0.02em;color:#e0ece4}
+#brand h1 .ru{color:#00d878}
+#brand h1 .go{color:#00b4d8;font-size:14px;vertical-align:super}
+#brand sub{font-size:11px;color:#5a7a6a;font-weight:400;display:block;margin-top:2px}
+
+/* Status bar */
+#status-bar{position:absolute;top:16px;right:20px;display:flex;gap:10px;align-items:center}
+.badge{padding:4px 12px;border-radius:20px;font-size:10px;font-weight:600;letter-spacing:0.06em;border:1px solid rgba(255,255,255,0.1)}
+.badge.live{color:#00d878;border-color:#00d87855;text-shadow:0 0 8px #00d87844}
+.badge.sim{color:#ffb020;border-color:#ffb02055}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:5px}
+.dot.on{background:#00d878;box-shadow:0 0 6px #00d878}
+.dot.off{background:#555}
+.dot.re{background:#ffb020;animation:blink 1s step-end infinite}
+@keyframes blink{50%{opacity:.3}}
+
+/* Panels */
+.panel{position:absolute;background:rgba(8,12,20,0.82);backdrop-filter:blur(16px);border:1px solid rgba(0,216,120,0.08);border-radius:12px;padding:14px 16px;min-width:200px}
+.panel-title{font-size:9px;text-transform:uppercase;letter-spacing:0.12em;color:#4a8a6a;margin-bottom:8px;font-weight:700}
+
+/* Left panel: Vitals */
+#panel-vitals{top:70px;left:20px;width:220px}
+.vital-row{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.vital-icon{font-size:18px;width:24px;text-align:center;color:#00d878}
+.vital-val{font-size:22px;font-weight:700;color:#00d878;line-height:1}
+.vital-unit{font-size:10px;color:#5a7a6a;margin-left:2px}
+.vital-label{font-size:9px;color:#5a7a6a;margin-top:1px}
+.vital-bar{height:3px;background:rgba(255,255,255,0.06);border-radius:2px;margin-top:4px;overflow:hidden}
+.vital-bar-fill{height:100%;border-radius:2px;transition:width .2s}
+.bar-hr{background:linear-gradient(90deg,#ff4060,#ff6080)}
+.bar-br{background:linear-gradient(90deg,#00d878,#40f0a0)}
+.bar-conf{background:linear-gradient(90deg,#00b4d8,#40d0f0)}
+
+/* Right panel: Signal */
+#panel-signal{top:70px;right:20px;width:220px}
+.sig-row{display:flex;justify-content:space-between;font-size:11px;padding:2px 0}
+.sig-label{color:#5a7a6a}
+.sig-val{color:#c8d8e4}
+canvas#sparkline{width:100%;height:44px;display:block;margin-top:6px}
+
+/* Presence badge */
+.presence{display:inline-block;padding:5px 14px;border-radius:6px;font-size:12px;font-weight:700;letter-spacing:0.05em;margin-top:8px}
+.presence.absent{background:rgba(60,80,100,0.25);color:#6080a0;border:1px solid #4060804a}
+.presence.present_still{background:rgba(0,200,100,0.2);color:#00cc66;border:1px solid #00cc6666}
+.presence.present_moving{background:rgba(0,200,100,0.2);color:#00cc66;border:1px solid #00cc6666}
+.presence.active{background:rgba(255,60,20,0.25);color:#ff4020;border:1px solid #ff402066;text-shadow:0 0 8px #ff402044}
+
+/* Bottom bar */
+#bottom-bar{position:absolute;bottom:16px;left:50%;transform:translateX(-50%);display:flex;gap:24px;font-size:10px;color:#3a6a5a;letter-spacing:0.05em}
+.cap-dot{color:#00d878;margin-right:4px}
+
+/* Meter */
+.meter{margin-bottom:6px}
+.meter-head{display:flex;justify-content:space-between;font-size:10px;color:#5a7a6a;margin-bottom:2px}
+.meter-track{height:3px;background:rgba(255,255,255,0.05);border-radius:2px;overflow:hidden}
+.meter-fill{height:100%;border-radius:2px;transition:width .15s}
+.mf-var{background:#00d878}
+.mf-mot{background:#00b4d8}
+.mf-brt{background:#a78bfa}
+.mf-spc{background:#f59e0b}
+
+/* Key hints */
+#keys{position:absolute;bottom:16px;right:20px;font-size:9px;color:#3a5a4a}
+#keys span{margin-left:10px}
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+
+<div id="hud">
+  <div id="brand">
+    <h1><span class="ru">Ru</span>View <span class="go">Go</span></h1>
+    <sub>WiFi Sensing Observatory</sub>
+  </div>
+
+  <div id="status-bar">
+    <div class="badge" id="srcBadge">--</div>
+    <div class="badge" id="connBadge"><span class="dot off" id="connDot"></span>--</div>
+  </div>
+
+  <!-- Left: Vitals + Classification -->
+  <div class="panel" id="panel-vitals">
+    <div class="panel-title">Vital Signs</div>
+    <div class="vital-row">
+      <div class="vital-icon">&#9825;</div>
+      <div>
+        <div><span class="vital-val" id="hrVal">--</span><span class="vital-unit">BPM</span></div>
+        <div class="vital-label">Heart Rate</div>
+        <div class="vital-bar"><div class="vital-bar-fill bar-hr" id="hrBar" style="width:0%"></div></div>
+      </div>
+    </div>
+    <div class="vital-row">
+      <div class="vital-icon">&#9788;</div>
+      <div>
+        <div><span class="vital-val" id="brVal">--</span><span class="vital-unit">BPM</span></div>
+        <div class="vital-label">Respiration</div>
+        <div class="vital-bar"><div class="vital-bar-fill bar-br" id="brBar" style="width:0%"></div></div>
+      </div>
+    </div>
+    <div class="vital-row">
+      <div class="vital-icon">&#9878;</div>
+      <div>
+        <div><span class="vital-val" id="confVal">--</span><span class="vital-unit">%</span></div>
+        <div class="vital-label">Confidence</div>
+        <div class="vital-bar"><div class="vital-bar-fill bar-conf" id="confBar" style="width:0%"></div></div>
+      </div>
+    </div>
+    <div class="panel-title" style="margin-top:8px">Presence</div>
+    <div class="presence absent" id="presenceBadge">ABSENT</div>
+  </div>
+
+  <!-- Right: Signal -->
+  <div class="panel" id="panel-signal">
+    <div class="panel-title">WiFi Signal</div>
+    <div class="sig-row"><span class="sig-label">RSSI</span><span class="sig-val" id="rssiVal">-- dBm</span></div>
+    <div class="sig-row"><span class="sig-label">Variance</span><span class="sig-val" id="varVal">--</span></div>
+    <div class="sig-row"><span class="sig-label">Motion</span><span class="sig-val" id="motVal">--</span></div>
+    <div class="sig-row"><span class="sig-label">Tick</span><span class="sig-val" id="tickVal">0</span></div>
+    <canvas id="sparkline"></canvas>
+
+    <div class="panel-title" style="margin-top:10px">Features</div>
+    <div class="meter"><div class="meter-head"><span>Variance</span><span id="fVar">0</span></div><div class="meter-track"><div class="meter-fill mf-var" id="bVar" style="width:0%"></div></div></div>
+    <div class="meter"><div class="meter-head"><span>Motion Band</span><span id="fMot">0</span></div><div class="meter-track"><div class="meter-fill mf-mot" id="bMot" style="width:0%"></div></div></div>
+    <div class="meter"><div class="meter-head"><span>Breathing</span><span id="fBrt">0</span></div><div class="meter-track"><div class="meter-fill mf-brt" id="bBrt" style="width:0%"></div></div></div>
+    <div class="meter"><div class="meter-head"><span>Spectral</span><span id="fSpc">0</span></div><div class="meter-track"><div class="meter-fill mf-spc" id="bSpc" style="width:0%"></div></div></div>
+  </div>
+
+  <div id="bottom-bar">
+    <span><span class="cap-dot">&#9679;</span>Human Pose Estimation</span>
+    <span><span class="cap-dot">&#9679;</span>Vital Sign Monitoring</span>
+    <span><span class="cap-dot">&#9679;</span>Presence Detection</span>
+  </div>
+  <div id="keys"><span>[Drag] Orbit</span><span>[Scroll] Zoom</span></div>
+</div>
+
+<script type="importmap">
+{"imports":{"three":"https://esm.sh/three@0.160.0","three/addons/":"https://esm.sh/three@0.160.0/examples/jsm/"}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+
+const $ = id => document.getElementById(id);
+const C = {green:0x00d878, blue:0x2090ff, red:0xff4060, bg:0x080c14, dim:0x0a6b3a};
+
+// ===== Renderer =====
+const canvas = $('scene');
+const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.9;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(C.bg);
+scene.fog = new THREE.FogExp2(C.bg, 0.008);
+
+const camera = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.1, 300);
+camera.position.set(8, 10, 10);
+
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.target.set(0, 0.5, 0);
+controls.minDistance = 5;
+controls.maxDistance = 30;
+controls.maxPolarAngle = Math.PI * 0.45;
+
+// ===== Post-processing (Bloom) =====
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth,innerHeight), 0.3, 0.6, 0.5);
+composer.addPass(bloom);
+
+// ===== Lighting =====
+scene.add(new THREE.AmbientLight(0xccccdd, 2.0));
+scene.add(new THREE.HemisphereLight(0x6688bb, 0x203040, 1.2));
+const keyLight = new THREE.DirectionalLight(0xffeedd, 1.2);
+keyLight.position.set(4, 8, 3);
+scene.add(keyLight);
+scene.add(new THREE.DirectionalLight(0x8899bb, 0.7).translateX(-4).translateY(5));
+const routerLight = new THREE.PointLight(C.blue, 1.2, 10);
+routerLight.position.set(0, 1.0, 0);
+scene.add(routerLight);
+
+// ===== Room =====
+const grid = new THREE.GridHelper(12, 24, 0x1a4830, 0x0c2818);
+grid.material.opacity = 0.5; grid.material.transparent = true;
+scene.add(grid);
+
+const roomEdges = new THREE.LineSegments(
+  new THREE.EdgesGeometry(new THREE.BoxGeometry(12,4,10)),
+  new THREE.LineBasicMaterial({color:C.dim, opacity:0.3, transparent:true})
+);
+roomEdges.position.y = 2;
+scene.add(roomEdges);
+
+// Floor
+const floorMat = new THREE.MeshStandardMaterial({color:0x101810, roughness:0.7, metalness:0.15, emissive:0x020404, emissiveIntensity:0.08});
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(12,10), floorMat);
+floor.rotation.x = -Math.PI/2; floor.receiveShadow = true;
+scene.add(floor);
+
+// Base Point (PC / sensor location — center of room)
+const bpBody = new THREE.Mesh(new THREE.BoxGeometry(0.5,0.06,0.35), new THREE.MeshStandardMaterial({color:0x404050,roughness:0.2,metalness:0.7}));
+bpBody.position.set(0,0.06,0); scene.add(bpBody);
+const bpScreen = new THREE.Mesh(new THREE.BoxGeometry(0.35,0.25,0.02), new THREE.MeshStandardMaterial({color:0x1a1a2e,roughness:0.3,metalness:0.5,emissive:0x0a2040,emissiveIntensity:0.3}));
+bpScreen.position.set(0,0.26,-0.08); bpScreen.rotation.x=-0.15; scene.add(bpScreen);
+const led = new THREE.Mesh(new THREE.SphereGeometry(0.02), new THREE.MeshBasicMaterial({color:C.green}));
+led.position.set(0.18,0.1,0.15); scene.add(led);
+
+// ===== WiFi Waves (flat rings on floor, centered) =====
+const wifiWaves = [];
+for(let i=0;i<4;i++){
+  const r = 0.8+i*1.0;
+  const geo = new THREE.RingGeometry(r, r+0.03, 48);
+  const mat = new THREE.MeshBasicMaterial({color:C.blue,transparent:true,opacity:0,side:THREE.DoubleSide,blending:THREE.AdditiveBlending,depthWrite:false});
+  const ring = new THREE.Mesh(geo, mat);
+  ring.rotation.x = -Math.PI/2;
+  ring.position.set(0, 0.04, 0);
+  scene.add(ring);
+  wifiWaves.push({mesh:ring, mat, phase:i*0.8, baseR:r});
+}
+
+// Base Point label sprite
+{
+  const cvs=document.createElement('canvas');cvs.width=256;cvs.height=64;
+  const cx=cvs.getContext('2d');
+  cx.font='bold 18px monospace';cx.fillStyle='#2090ff';cx.textAlign='center';
+  cx.fillText('Base Point',128,38);
+  const tex=new THREE.CanvasTexture(cvs);
+  const spr=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,transparent:true,opacity:0.7,depthWrite:false}));
+  spr.position.set(0, 0.55, 0);
+  spr.scale.set(1.5, 0.38, 1);
+  scene.add(spr);
+}
+
+// ===== Signal Field (Gaussian Splats) =====
+const SPLAT_VS = `
+  attribute float splatSize;
+  attribute vec3 splatColor;
+  attribute float splatOpacity;
+  varying vec3 vColor;
+  varying float vOpacity;
+  void main(){
+    vColor=splatColor; vOpacity=splatOpacity;
+    vec4 mv=modelViewMatrix*vec4(position,1.0);
+    gl_PointSize=splatSize*(300.0/-mv.z);
+    gl_Position=projectionMatrix*mv;
+  }
+`;
+const SPLAT_FS = `
+  varying vec3 vColor;
+  varying float vOpacity;
+  void main(){
+    float d=length(gl_PointCoord-vec2(0.5));
+    if(d>0.5)discard;
+    float a=smoothstep(0.5,0.15,d)*vOpacity;
+    gl_FragColor=vec4(vColor,a);
+  }
+`;
+
+const GS = 20, GC = GS*GS;
+const fPos = new Float32Array(GC*3);
+const fSize = new Float32Array(GC);
+const fColor = new Float32Array(GC*3);
+const fOpac = new Float32Array(GC);
+for(let iz=0;iz<GS;iz++)for(let ix=0;ix<GS;ix++){
+  const idx=iz*GS+ix;
+  fPos[idx*3]=(ix-GS/2)*0.6;
+  fPos[idx*3+1]=0.03;
+  fPos[idx*3+2]=(iz-GS/2)*0.5;
+  fSize[idx]=1.8; fColor[idx*3]=0.02; fColor[idx*3+1]=0.08; fColor[idx*3+2]=0.2; fOpac[idx]=0.25;
+}
+const fieldGeo = new THREE.BufferGeometry();
+fieldGeo.setAttribute('position', new THREE.BufferAttribute(fPos,3));
+fieldGeo.setAttribute('splatSize', new THREE.BufferAttribute(fSize,1));
+fieldGeo.setAttribute('splatColor', new THREE.BufferAttribute(fColor,3));
+fieldGeo.setAttribute('splatOpacity', new THREE.BufferAttribute(fOpac,1));
+const fieldPts = new THREE.Points(fieldGeo, new THREE.ShaderMaterial({
+  vertexShader:SPLAT_VS, fragmentShader:SPLAT_FS,
+  transparent:true, depthWrite:false, blending:THREE.AdditiveBlending
+}));
+scene.add(fieldPts);
+
+// (Body Blob and Mist removed — RSSI cannot determine position)
+
+// ===== WebSocket =====
+const proto = location.protocol==='https:'?'wss:':'ws:';
+const wsUrl = `${proto}//${location.host}/ws/sensing`;
+let ws=null, reconnAttempt=0, reconnTimer=null;
+const delays=[500,1000,2000,4000,8000];
+let latestData=null;
+
+function setConn(state){
+  const d=$('connDot'), b=$('connBadge');
+  d.className='dot '+(state==='connected'?'on':state==='reconnecting'?'re':'off');
+  b.innerHTML=d.outerHTML+({connected:'Connected',reconnecting:'Reconnecting',disconnected:'Offline',connecting:'Connecting'}[state]||state);
+}
+
+function connect(){
+  if(ws&&ws.readyState<=1)return;
+  setConn('connecting');
+  ws=new WebSocket(wsUrl);
+  ws.onopen=()=>{reconnAttempt=0;setConn('connected')};
+  ws.onmessage=e=>{try{latestData=JSON.parse(e.data)}catch{}};
+  ws.onclose=e=>{ws=null;if(e.code!==1000)schedReconn();else setConn('disconnected')};
+  ws.onerror=()=>{};
+}
+function schedReconn(){
+  if(reconnAttempt>=30){setConn('disconnected');return}
+  setConn('reconnecting');
+  reconnTimer=setTimeout(()=>{reconnTimer=null;connect()},delays[Math.min(reconnAttempt++,delays.length-1)]);
+}
+connect();
+
+// ===== HUD State =====
+const rssiHist=[];
+const maxHist=60;
+
+function updateHUD(d){
+  if(!d)return;
+  const f=d.features||{}, c=d.classification||{}, vs=d.vital_signs;
+
+  // Source badge
+  const src=d.source||'--';
+  const sb=$('srcBadge');
+  sb.textContent=src.toUpperCase();
+  sb.className='badge '+(src==='simulated'||src==='simulate'?'sim':'live');
+
+  // RSSI
+  const rssi=f.mean_rssi!=null?f.mean_rssi:-80;
+  $('rssiVal').textContent=rssi.toFixed(1)+' dBm';
+  rssiHist.push(rssi);
+  if(rssiHist.length>maxHist)rssiHist.shift();
+  drawSparkline();
+
+  // Signal rows
+  $('varVal').textContent=(f.variance||0).toFixed(2);
+  $('motVal').textContent=(f.motion_band_power||0).toFixed(3);
+  $('tickVal').textContent=d.tick||0;
+
+  // Meters — scaled to realistic RSSI-based ranges
+  const sm=(id,v,mx,fid)=>{$(id).style.width=Math.min(100,(v/mx)*100)+'%';$(fid).textContent=v.toFixed(2)};
+  sm('bVar',f.variance||0,5,'fVar');
+  sm('bMot',f.motion_band_power||0,15,'fMot');
+  sm('bBrt',f.breathing_band_power||0,10,'fBrt');
+  sm('bSpc',f.spectral_power||0,50,'fSpc');
+
+  // Presence
+  const lvl=c.motion_level||'absent';
+  const pb=$('presenceBadge');
+  pb.textContent=lvl.toUpperCase().replace('_',' ');
+  pb.className='presence '+lvl;
+
+  // Confidence
+  const conf=((c.confidence||0)*100).toFixed(0);
+  $('confVal').textContent=conf;
+  $('confBar').style.width=conf+'%';
+
+  // Vitals
+  if(vs){
+    $('brVal').textContent=vs.breathing_rate_bpm>0?vs.breathing_rate_bpm.toFixed(1):'--';
+    $('brBar').style.width=Math.min(100,vs.breathing_rate_bpm/30*100)+'%';
+    $('hrVal').textContent=vs.heart_rate_bpm>0?vs.heart_rate_bpm.toFixed(0):'--';
+    $('hrBar').style.width=Math.min(100,vs.heart_rate_bpm/120*100)+'%';
+  }
+}
+
+function drawSparkline(){
+  const c=$('sparkline'), cx=c.getContext('2d');
+  const w=c.width=c.clientWidth*devicePixelRatio, h=c.height=c.clientHeight*devicePixelRatio;
+  cx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
+  const cw=c.clientWidth,ch=c.clientHeight;
+  cx.clearRect(0,0,cw,ch);
+  if(rssiHist.length<2)return;
+  const mn=Math.min(...rssiHist)-2, mx=Math.max(...rssiHist)+2, rng=mx-mn||1;
+  cx.beginPath();
+  for(let i=0;i<rssiHist.length;i++){
+    const x=i/(rssiHist.length-1)*cw, y=ch-((rssiHist[i]-mn)/rng)*ch;
+    i===0?cx.moveTo(x,y):cx.lineTo(x,y);
+  }
+  cx.strokeStyle='#00d878';cx.lineWidth=1.5;cx.stroke();
+  cx.lineTo(cw,ch);cx.lineTo(0,ch);cx.closePath();
+  const g=cx.createLinearGradient(0,0,0,ch);
+  g.addColorStop(0,'rgba(0,216,120,0.2)');g.addColorStop(1,'rgba(0,216,120,0)');
+  cx.fillStyle=g;cx.fill();
+}
+
+// ===== 3D Update =====
+// Smoothed values for reactive animation
+let smoothVar=0, smoothMot=0, smoothConf=0, smoothRssi=-70;
+let prevPresent=false, flashTimer=0;
+
+// Signal field: blue(quiet) → green(presence) → red(motion) — matches RuView
+function valToColor(v){
+  const t=Math.max(0,Math.min(1,v));
+  let r,g,b;
+  if(t<0.5){const s=t*2; r=0; g=s; b=1-s;}
+  else{const s=(t-0.5)*2; r=s; g=1-s; b=0;}
+  return[r,g,b];
+}
+
+function updateScene(d, elapsed, dt){
+  if(!d)return;
+  const f=d.features||{}, c=d.classification||{}, sf=d.signal_field;
+  const present=c.presence||false;
+  const motion=c.motion_level||'absent';
+  const conf=c.confidence||0;
+  const rssi=f.mean_rssi||-70;
+  const variance=f.variance||0;
+  const motPow=f.motion_band_power||0;
+  const breathing=f.breathing_band_power||0;
+
+  // Fast interpolation — react within a few frames
+  smoothVar+=(variance-smoothVar)*0.4;
+  smoothMot+=(motPow-smoothMot)*0.4;
+  smoothConf+=(conf-smoothConf)*0.3;
+  smoothRssi+=(rssi-smoothRssi)*0.3;
+
+  // Flash on state transitions
+  if(present && !prevPresent) flashTimer=1.0;
+  prevPresent=present;
+  flashTimer=Math.max(0, flashTimer-dt*2);
+
+  // Reactivity: variance 0.3+ and motPow 2+ should already feel "active"
+  const activity = Math.min(1, smoothVar/1.5 + smoothMot/8);
+  const breathPulse = Math.sin(elapsed*3.5) * Math.min(0.4, breathing*0.15);
+
+  // === Signal field ===
+  if(sf&&sf.values){
+    const clr=fieldGeo.attributes.splatColor.array;
+    const sz=fieldGeo.attributes.splatSize.array;
+    const op=fieldGeo.attributes.splatOpacity.array;
+    const pos=fieldGeo.attributes.position.array;
+    const n=Math.min(sf.values.length,GC);
+    for(let i=0;i<n;i++){
+      const v=sf.values[i];
+      // Boost proportional to signal value — only hot areas get boosted
+      const boost = v + v*activity*0.8 + flashTimer*v*0.3;
+      const vClamped = Math.min(1, boost);
+      const[r,g,b]=valToColor(vClamped);
+      clr[i*3]=r; clr[i*3+1]=g; clr[i*3+2]=b;
+      sz[i]=1.2+vClamped*5.0;
+      op[i]=0.08+vClamped*0.7;
+      pos[i*3+1]=0.03 + vClamped*0.5 + breathPulse*vClamped*0.3;
+    }
+    fieldGeo.attributes.splatColor.needsUpdate=true;
+    fieldGeo.attributes.splatSize.needsUpdate=true;
+    fieldGeo.attributes.splatOpacity.needsUpdate=true;
+    fieldGeo.attributes.position.needsUpdate=true;
+  }
+
+  // === WiFi waves — strongly reactive ===
+  const waveIntensity = 0.1 + activity*0.4 + flashTimer*0.2;
+  for(const w of wifiWaves){
+    const t=(elapsed*0.6+w.phase)%3.5;
+    const life=t/3.5;
+    w.mat.opacity=Math.max(0,waveIntensity*(1-life));
+    const s=1+life*1.8;
+    w.mesh.scale.set(s,s,s);
+  }
+
+  // === Router LED + light — reacts to RSSI ===
+  const rssiNorm = Math.min(1, Math.max(0, (smoothRssi+90)/60)); // -90→0, -30→1
+  led.material.opacity=0.3+0.7*rssiNorm;
+  led.material.color.setHSL(rssiNorm*0.3, 1, 0.5); // red→green based on signal strength
+  routerLight.intensity=0.2+rssiNorm*1.5+0.3*Math.sin(elapsed*4);
+  routerLight.color.setHSL(0.55+activity*0.1, 0.8, 0.5);
+
+  // === Bloom — very subtle, preserve color clarity ===
+  bloom.strength = 0.1 + activity*0.15 + flashTimer*0.2;
+
+}
+
+// ===== Animation Loop =====
+const clock = new THREE.Clock();
+function animate(){
+  requestAnimationFrame(animate);
+  const dt=Math.min(clock.getDelta(),0.1);
+  const elapsed=clock.getElapsedTime();
+  controls.update();
+
+  if(latestData){
+    updateHUD(latestData);
+    updateScene(latestData, elapsed, dt);
+  }
+
+  composer.render();
+}
+animate();
+
+// ===== Resize =====
+addEventListener('resize',()=>{
+  camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+  composer.setSize(innerWidth,innerHeight);
+});
+
+// Fetch status
+fetch('/api/v1/status').then(r=>r.json()).then(d=>{
+  $('srcBadge').textContent=(d.source||'--').toUpperCase();
+}).catch(()=>{});
+</script>
+</body>
+</html>
