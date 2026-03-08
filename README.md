@@ -73,6 +73,12 @@ docker run -p 3000:3000 ruvnet/wifi-densepose:latest
 
 A lightweight Go re-implementation of RuView's core sensing server. Designed for integration with Go-based mesh networks (e.g. Tailscale/Runetale). Training remains in Python; Go handles real-time inference and signal processing.
 
+<p align="center">
+  <img src="assets/go-densepose-ui.png" alt="RuView Go — WiFi Sensing Observatory" width="100%">
+</p>
+
+> **RuView Go — WiFi Sensing Observatory.** Real-time 3D signal field visualization with presence detection, motion classification, and vital sign monitoring. The heatmap shows signal disruption: blue (quiet) → green (presence) → red (active motion). All data is derived from the Mac's WiFi chip via RSSI — no additional hardware required.
+
 ### Quick Start (macOS)
 
 ```bash
